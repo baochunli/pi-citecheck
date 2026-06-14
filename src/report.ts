@@ -1,0 +1,187 @@
+import { basename, join, relative } from "node:path";
+import type { PaperReport, ReferenceCheck, SummaryReport, Verdict } from "./types.ts";
+import { firstLine, writeJson, writeText } from "./utils.ts";
+
+export async function writePaperReport(report: PaperReport): Promise<{ markdownPath: string; jsonPath: string }> {
+	const mdPath = join(report.outputDir, "reports", `${report.slug}.report.md`);
+	const jsonPath = join(report.outputDir, "reports", `${report.slug}.report.json`);
+	await writeText(mdPath, renderPaperReport(report));
+	await writeJson(jsonPath, report);
+	return { markdownPath: mdPath, jsonPath };
+}
+
+export async function writeSummaryReport(summary: SummaryReport): Promise<{ markdownPath: string; jsonPath: string }> {
+	const mdPath = join(summary.outDir, "summary.md");
+	const jsonPath = join(summary.outDir, "summary.json");
+	await writeText(mdPath, renderSummaryReport(summary));
+	await writeJson(jsonPath, summary);
+	return { markdownPath: mdPath, jsonPath };
+}
+
+export function makeSummary(startedAt: string, finishedAt: string, outDir: string, options: SummaryReport["options"], papers: PaperReport[]): SummaryReport {
+	const counts = emptyVerdictCounts();
+	for (const paper of papers) {
+		for (const check of paper.checks) {
+			counts.total++;
+			counts[check.verdict]++;
+		}
+	}
+	return { startedAt, finishedAt, outDir, options, papers, counts };
+}
+
+function renderSummaryReport(summary: SummaryReport): string {
+	const lines: string[] = [];
+	lines.push("# Citecheck Summary", "");
+	lines.push(`Started: ${summary.startedAt}`);
+	lines.push(`Finished: ${summary.finishedAt}`);
+	lines.push(`Output directory: \`${summary.outDir}\``, "");
+	lines.push("## Paper attention counts", "");
+	lines.push("| Paper | mismatch | needs-manual-review |", "|---|---:|---:|");
+	for (const paper of summary.papers) {
+		const counts = countPaperVerdicts(paper);
+		lines.push(
+			`| ${escapeTable(basename(paper.inputPath))} | ${counts.mismatch} | ${counts["needs-manual-review"]} |`,
+		);
+	}
+	lines.push("", "## Per-paper verdict counts", "");
+	lines.push(
+		"| Paper | Total references | valid | likely-valid | mismatch | needs-manual-review |",
+		"|---|---:|---:|---:|---:|---:|",
+	);
+	for (const paper of summary.papers) {
+		const counts = countPaperVerdicts(paper);
+		lines.push(
+			`| ${escapeTable(basename(paper.inputPath))} | ${counts.total} | ${counts.valid} | ${counts["likely-valid"]} | ${counts.mismatch} | ${counts["needs-manual-review"]} |`,
+		);
+	}
+	lines.push("");
+	return lines.join("\n");
+}
+
+function countPaperVerdicts(paper: PaperReport): Record<Verdict | "total", number> {
+	const counts = emptyVerdictCounts();
+	for (const check of paper.checks) {
+		counts.total++;
+		counts[check.verdict]++;
+	}
+	return counts;
+}
+
+function emptyVerdictCounts(): Record<Verdict | "total", number> {
+	return {
+		total: 0,
+		valid: 0,
+		"likely-valid": 0,
+		mismatch: 0,
+		unverified: 0,
+		"likely-hallucinated": 0,
+		"needs-manual-review": 0,
+	};
+}
+
+function renderPaperReport(report: PaperReport): string {
+	const rel = (path: string | undefined) => (path ? relative(report.outputDir, path) || "." : "");
+	const lines: string[] = [];
+	lines.push(`# Citecheck Report: ${basename(report.inputPath)}`, "");
+	lines.push(`Input: \`${report.inputPath}\``);
+	lines.push(`Started: ${report.startedAt}`);
+	lines.push(`Finished: ${report.finishedAt}`);
+	lines.push(`Conversion mode: \`${report.conversionMode}\``);
+	if (report.refsOnlyPdf?.path) {
+		lines.push(
+			`References-only PDF: \`${rel(report.refsOnlyPdf.path)}\` (${formatRefsOnlyPdfRange(report.refsOnlyPdf)}, method ${report.refsOnlyPdf.method})`,
+		);
+	} else if (report.refsOnlyPdf?.startPage) {
+		lines.push(`${formatRefsOnlyPdfRange(report.refsOnlyPdf)} (full PDF converted).`);
+	}
+	lines.push("");
+
+	if (report.warnings.length > 0) {
+		lines.push("## Warnings", "");
+		for (const warning of report.warnings) lines.push(`- ${warning}`);
+		lines.push("");
+	}
+	if (report.errors.length > 0) {
+		lines.push("## Errors", "");
+		for (const error of report.errors) lines.push(`- ${error}`);
+		lines.push("");
+	}
+
+	lines.push("## Conversion artifacts", "");
+	lines.push("| Mode | Markdown | References section | Entries | Section found |", "|---|---|---|---:|---|");
+	for (const artifact of report.artifacts) {
+		lines.push(
+			`| ${artifact.mode} | \`${rel(artifact.markdownPath)}\` | \`${rel(artifact.refsPath)}\` | ${artifact.references.length} | ${artifact.section.found ? "yes" : "no"} |`,
+		);
+	}
+	lines.push("");
+
+	if (report.comparison) {
+		lines.push("## Conversion comparison", "");
+		lines.push(`Primary conversion: \`${report.comparison.primaryMode}\``);
+		lines.push(report.comparison.primaryReason, "");
+		for (const note of report.comparison.summary) lines.push(`- ${note}`);
+		if (report.comparison.summary.length > 0) lines.push("");
+	}
+
+	lines.push("## Reference verdicts", "");
+	lines.push("| # | Verdict | Confidence | Query | Reason |", "|---:|---|---:|---|---|");
+	for (const check of report.checks) {
+		lines.push(
+			`| ${check.entry.index} | ${check.verdict} | ${check.confidence.toFixed(2)} | ${escapeTable(check.normalized.query)} | ${escapeTable(firstLine(check.reason, 180))} |`,
+		);
+	}
+	lines.push("");
+
+	lines.push("## Details", "");
+	for (const check of report.checks) {
+		appendCheckDetails(lines, check, report.outputDir);
+	}
+	return lines.join("\n");
+}
+
+function appendCheckDetails(lines: string[], check: ReferenceCheck, outDir: string): void {
+	const rel = (path: string | undefined) => (path ? relative(outDir, path) || "." : "");
+	lines.push(`### Reference ${check.entry.index}: ${check.verdict}`, "");
+	lines.push(`Confidence: ${check.confidence.toFixed(2)}`);
+	lines.push(`Reason: ${check.reason}`);
+	if (check.conversionNotes.length > 0) {
+		lines.push("", "Conversion notes:");
+		for (const note of check.conversionNotes) lines.push(`- ${note}`);
+	}
+	lines.push("", "Original reference:", "");
+	lines.push("> " + check.entry.raw.replace(/\n/g, "\n> "), "");
+	lines.push("Extracted fields:");
+	for (const [key, value] of Object.entries(check.normalized)) {
+		if (value && key !== "query") lines.push(`- ${key}: ${value}`);
+	}
+	lines.push(`- search query: ${check.normalized.query}`);
+	if (check.evidence) {
+		lines.push("", "Search evidence:");
+		if (check.evidence.rawJsonPath) lines.push(`- raw JSON: \`${rel(check.evidence.rawJsonPath)}\``);
+		if (check.evidence.rawTextPath) lines.push(`- raw text: \`${rel(check.evidence.rawTextPath)}\``);
+		if (check.evidenceUrls.length > 0) {
+			lines.push("- URLs:");
+			for (const url of check.evidenceUrls) lines.push(`  - ${url}`);
+		}
+	}
+	lines.push("");
+}
+
+function formatRefsOnlyPdfRange(refsOnlyPdf: NonNullable<PaperReport["refsOnlyPdf"]>): string {
+	const source = refsOnlyPdf.source === "specified" ? "specified" : "detected";
+	if (refsOnlyPdf.startPage && refsOnlyPdf.endPage && refsOnlyPdf.startPage === refsOnlyPdf.endPage) {
+		return `${source} references page ${refsOnlyPdf.startPage}`;
+	}
+	if (refsOnlyPdf.startPage && refsOnlyPdf.endPage) {
+		return `${source} references pages ${refsOnlyPdf.startPage}-${refsOnlyPdf.endPage}`;
+	}
+	if (refsOnlyPdf.startPage) {
+		return `${source} references start page ${refsOnlyPdf.startPage}`;
+	}
+	return `${source} references pages`;
+}
+
+function escapeTable(value: string): string {
+	return value.replace(/\|/g, "\\|").replace(/\n/g, " ");
+}

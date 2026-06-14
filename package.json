@@ -1,0 +1,30 @@
+{
+  "name": "pi-citecheck",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pi extension for checking PDFs for hallucinated references using Docling and GPT Web Search.",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "citations",
+    "references"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/citecheck/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}
