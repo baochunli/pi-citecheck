@@ -1,18 +1,16 @@
 # pi-citecheck
 
-`pi-citecheck` is a standalone Pi package that adds a `/citecheck` slash command for checking academic PDFs for likely AI-hallucinated references. It converts PDFs to Markdown with Docling, extracts only the references section, and verifies each bibliography entry using the installed `native-web-search` skill, which runs GPT Web Search.
+`pi-citecheck` is a standalone Pi extension that adds a `/citecheck` slash command for checking academic PDFs for likely AI-hallucinated references. It converts PDFs to Markdown with Docling, extracts only the references section, and verifies each bibliography entry using the installed `native-web-search` skill, which runs GPT Web Search.
 
-The goal is not to replace a bibliographic database. The goal is to quickly identify references that deserve manual review: nonexistent titles, DOI mismatches, wrong venues, wrong years, or suspicious references that only appear in the paper being checked.
+The goal is to quickly identify references that deserve manual review: nonexistent titles, DOI mismatches, wrong venues, wrong years, or suspicious references that only appear in the paper being checked.
 
-## Status
+## Installing the Extension
 
-This repository is a local Pi extension package located at:
-
-```text
-~/Playground/citecheck
+```bash
+pi install https://github.com/baochunli/pi-citecheck
 ```
 
-It is intended to be loaded by Pi either temporarily during development or installed as a local package.
+After installing, start Pi and use `/citecheck` from the Pi prompt.
 
 ## Features
 
@@ -25,7 +23,7 @@ It is intended to be loaded by Pi either temporarily during development or insta
   - Uses `pdftotext` to find the first references page.
   - Attempts to create a smaller references-only PDF with `qpdf` or Python `pypdf`/`PyPDF2`.
   - Falls back to full-PDF conversion when automatically detected references-page slicing is unavailable.
-- Supports `--refs-page <n>` / `--references-page <n>` when the 1-based references page is known; this skips page detection and converts only that PDF page. If the page-only PDF cannot be created, `/citecheck` stops before Docling instead of converting the full PDF.
+- Supports `--refs-page <n>` / `--references-page <n>` when the page that contains references is known; this skips page detection and converts only that PDF page. If the page-only PDF cannot be created, `/citecheck` stops before Docling instead of converting the full PDF.
 - Always extracts only the references/bibliography section before checking citations.
 - Splits references into individual entries with numbered and author-year heuristics.
 - Normalizes useful citation fields such as title, authors, year, DOI, URL, and arXiv ID.
@@ -67,22 +65,6 @@ brew install poppler qpdf
 ```
 
 If `pdftotext` or PDF slicing is unavailable, `/citecheck` still works. It converts the whole PDF, then discards everything except the extracted references section before web search.
-
-## Loading the extension
-
-### Temporary development load
-
-```bash
-pi -e ~/Playground/citecheck
-```
-
-### Persistent local install
-
-```bash
-pi install ~/Playground/citecheck
-```
-
-After loading or installing, start Pi and use `/citecheck` from the Pi prompt.
 
 ## Quick start
 
@@ -466,10 +448,6 @@ Use `--max-concurrency 1` to make searches sequential:
 /citecheck paper.pdf --max-concurrency 1
 ```
 
-### The report flags conversion disagreement
-
-This means the primary Docling conversion and the other conversion did not closely agree on a reference. Inspect the corresponding files under `refs/` and `markdown/` before treating the citation as suspicious.
-
 ## Limitations
 
 - Citation parsing is heuristic and may struggle with unusual bibliography styles.
@@ -478,12 +456,6 @@ This means the primary Docling conversion and the other conversion did not close
 - A verdict is evidence for review, not a proof.
 - The extension currently performs one web-search request per reference, which can be slow or rate-limited for large bibliographies.
 
-## Privacy and cost notes
-
-`/citecheck` sends reference text and extracted metadata to the `native-web-search` skill. It does not intentionally send the full paper body to web search, but references may include titles, author names, URLs, DOIs, and other bibliography metadata. Use caution with confidential manuscripts.
-
-Large bibliographies can trigger many web-search calls. Use `--max-refs`, `--max-concurrency`, or a custom `--out` directory while testing.
-
 ## Git hygiene
 
-Generated reports under `.pi/citecheck/` are ignored by this repository. If you write reports elsewhere with `--out`, review the output before committing because raw search files can be verbose.
+Generated reports under `.pi/citecheck/` are ignored by this repository.
