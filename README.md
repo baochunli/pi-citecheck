@@ -334,7 +334,7 @@ Each per-paper report includes:
 ## Repository layout
 
 ```text
-~/Playground/citecheck/
+pi-citecheck/
   package.json
   README.md
   tsconfig.json
