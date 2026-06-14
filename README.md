@@ -305,8 +305,8 @@ The summary report includes:
 
 - Start and finish timestamps.
 - Output directory.
-- A "Papers that need attention" table listing only papers with `mismatch` or `needs-manual-review` counts above zero.
-- A "Citation checks on all papers" verdict-count table with total references, `valid`, `likely-valid`, `mismatch`, and `needs-manual-review` counts.
+- A "Papers that need attention" table listing only papers with `mismatch`, `likely-hallucinated`, or `needs-manual-review` counts above zero.
+- A "Citation checks on all papers" verdict-count table with total references, `valid`, `likely-valid`, `mismatch`, `likely-hallucinated`, and `needs-manual-review` counts.
 
 ### Per-paper reports
 

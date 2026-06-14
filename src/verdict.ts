@@ -42,6 +42,14 @@ export function classifyEvidence(entry: ReferenceEntry, evidence: SearchEvidence
 				evidenceUrls: urls,
 			};
 		}
+		if ((parsedVerdict === "valid" || parsedVerdict === "likely-valid") && looksLikeMaterialBibliographicMismatch(text)) {
+			return {
+				verdict: "mismatch",
+				confidence: parsedConfidence ?? defaultConfidence("mismatch"),
+				reason: `Search evidence reports a material bibliographic mismatch despite the returned ${parsedVerdict} verdict: ${reason}`,
+				evidenceUrls: urls,
+			};
+		}
 		return {
 			verdict: parsedVerdict,
 			confidence: parsedConfidence ?? defaultConfidence(parsedVerdict),
@@ -51,6 +59,9 @@ export function classifyEvidence(entry: ReferenceEntry, evidence: SearchEvidence
 	}
 
 	const lower = text.toLowerCase();
+	if (looksLikeMaterialBibliographicMismatch(text)) {
+		return { verdict: "mismatch", confidence: parsedConfidence ?? 0.78, reason, evidenceUrls: urls };
+	}
 	if (/\b(doi|title|author|venue|year)s?\b.{0,80}\b(mismatch|does not match|different paper|incorrect)\b/s.test(lower)) {
 		return { verdict: "mismatch", confidence: parsedConfidence ?? 0.72, reason, evidenceUrls: urls };
 	}
@@ -64,6 +75,26 @@ export function classifyEvidence(entry: ReferenceEntry, evidence: SearchEvidence
 		return { verdict: "likely-valid", confidence: parsedConfidence ?? 0.72, reason, evidenceUrls: urls };
 	}
 	return { verdict: "needs-manual-review", confidence: parsedConfidence ?? 0.4, reason, evidenceUrls: urls };
+}
+
+function looksLikeMaterialBibliographicMismatch(text: string): boolean {
+	const lower = text
+		.toLowerCase()
+		.replace(/\b(?:not|no)\s+(?:a\s+)?(?:title\s*(?:\/|or)\s*)?(?:venue|journal|conference)\s+mismatch\b/g, "")
+		.replace(/\b(?:not|no)\s+(?:a\s+)?(?:venue|journal|conference)\s*(?:\/|or)\s*title\s+mismatch\b/g, "");
+	const materialPatterns = [
+		/\b(?:doi|year|page range|pages?)\s+(?:mismatch(?:es)?|does not match|is wrong|is incorrect|wrong|incorrect)\b/s,
+		/\b(?:wrong|incorrect|mismatched)\s+(?:doi|year|page range|pages?)\b/s,
+		/\b(?:title|author list|authors?)\s+(?:mismatch(?:es)?|does not match|is wrong|is incorrect|wrong|incorrect)\b/s,
+		/\b(?:venue|journal|conference)(?:\/year)?\s+(?:mismatch(?:es)?|does not match|is wrong|is incorrect|wrong|incorrect|differs|conflicts?|is off|are off)\b/s,
+		/\b(?:venue|journal|conference)(?:\/year)?\b.{0,80}\b(?:off|wrong|incorrect|differs|different|conflicts?)\b/s,
+		/\b(?:off|wrong|incorrect|differs|different|conflicts?)\b.{0,80}\b(?:venue|journal|conference)(?:\/year)?\b/s,
+		/\b(?:journal|venue|conference)\b.{0,120}\bconflicts?\s+with\b/s,
+		/\bconflicts?\s+with\s+(?:the\s+)?(?:original\s+)?(?:reference|citation)(?:'s|’s)?\b.{0,120}\b(?:venue|journal|conference|year)\b/s,
+		/\b(?:original\s+)?(?:reference|citation)(?:'s|’s)?\b.{0,120}\b(?:venue|journal|conference|year)\b.{0,120}\b(?:wrong|incorrect|mismatch(?:es)?|off|differs|conflicts?)\b/s,
+		/\b(?:original\s+)?(?:reference|citation)(?:'s|’s)?\b.{0,120}\b(?:likely\s+)?incorrect\b/s,
+	];
+	return materialPatterns.some((pattern) => pattern.test(lower));
 }
 
 function looksLikeBenignBibliographicVariantMismatch(text: string): boolean {

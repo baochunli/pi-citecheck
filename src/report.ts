@@ -46,25 +46,25 @@ function renderSummaryReport(summary: SummaryReport): string {
 	const attentionRows: string[] = [];
 	for (const paper of summary.papers) {
 		const counts = countPaperVerdicts(paper);
-		if (counts.mismatch === 0 && counts["needs-manual-review"] === 0) continue;
+		if (counts.mismatch === 0 && counts["likely-hallucinated"] === 0 && counts["needs-manual-review"] === 0) continue;
 		attentionRows.push(
-			`| ${escapeTable(basename(paper.inputPath))} | ${counts.mismatch} | ${counts["needs-manual-review"]} |`,
+			`| ${escapeTable(basename(paper.inputPath))} | ${counts.mismatch} | ${counts["likely-hallucinated"]} | ${counts["needs-manual-review"]} |`,
 		);
 	}
 	if (attentionRows.length > 0) {
-		lines.push("| Paper | mismatch | needs-manual-review |", "|---|---:|---:|", ...attentionRows);
+		lines.push("| Paper | mismatch | likely-hallucinated | needs-manual-review |", "|---|---:|---:|---:|", ...attentionRows);
 	} else {
 		lines.push("_No papers need attention._");
 	}
 	lines.push("", "## Citation checks on all papers", "");
 	lines.push(
-		"| Paper | Total references | valid | likely-valid | mismatch | needs-manual-review |",
-		"|---|---:|---:|---:|---:|---:|",
+		"| Paper | Total references | valid | likely-valid | mismatch | likely-hallucinated | needs-manual-review |",
+		"|---|---:|---:|---:|---:|---:|---:|",
 	);
 	for (const paper of summary.papers) {
 		const counts = countPaperVerdicts(paper);
 		lines.push(
-			`| ${escapeTable(basename(paper.inputPath))} | ${counts.total} | ${counts.valid} | ${counts["likely-valid"]} | ${counts.mismatch} | ${counts["needs-manual-review"]} |`,
+			`| ${escapeTable(basename(paper.inputPath))} | ${counts.total} | ${counts.valid} | ${counts["likely-valid"]} | ${counts.mismatch} | ${counts["likely-hallucinated"]} | ${counts["needs-manual-review"]} |`,
 		);
 	}
 	if (summary.skipped.length > 0) {
