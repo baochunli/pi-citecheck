@@ -34,11 +34,19 @@ export function classifyEvidence(entry: ReferenceEntry, evidence: SearchEvidence
 	const reason = parseReason(text) ?? summarizeReason(text, entry.raw);
 
 	if (parsedVerdict) {
-		if (parsedVerdict === "mismatch" && looksLikeExtractionArtifactMismatch(text)) {
+		if (parsedVerdict === "mismatch" && (looksLikeExtractionArtifactMismatch(text) || looksLikeBenignBibliographicVariantMismatch(text))) {
 			return {
 				verdict: "likely-valid",
 				confidence: Math.min(parsedConfidence ?? defaultConfidence("likely-valid"), 0.82),
-				reason: `Search evidence supports the reference; the reported mismatch appears to be an extraction or abbreviation artifact: ${reason}`,
+				reason: `Search evidence supports the reference; the reported mismatch appears to be an extraction, abbreviation, or punctuation artifact: ${reason}`,
+				evidenceUrls: urls,
+			};
+		}
+		if ((parsedVerdict === "valid" || parsedVerdict === "likely-valid") && looksLikeMaterialBibliographicMismatch(text)) {
+			return {
+				verdict: "mismatch",
+				confidence: parsedConfidence ?? defaultConfidence("mismatch"),
+				reason: `Search evidence reports a material bibliographic mismatch despite the returned ${parsedVerdict} verdict: ${reason}`,
 				evidenceUrls: urls,
 			};
 		}
@@ -51,6 +59,9 @@ export function classifyEvidence(entry: ReferenceEntry, evidence: SearchEvidence
 	}
 
 	const lower = text.toLowerCase();
+	if (looksLikeMaterialBibliographicMismatch(text)) {
+		return { verdict: "mismatch", confidence: parsedConfidence ?? 0.78, reason, evidenceUrls: urls };
+	}
 	if (/\b(doi|title|author|venue|year)s?\b.{0,80}\b(mismatch|does not match|different paper|incorrect)\b/s.test(lower)) {
 		return { verdict: "mismatch", confidence: parsedConfidence ?? 0.72, reason, evidenceUrls: urls };
 	}
@@ -64,6 +75,49 @@ export function classifyEvidence(entry: ReferenceEntry, evidence: SearchEvidence
 		return { verdict: "likely-valid", confidence: parsedConfidence ?? 0.72, reason, evidenceUrls: urls };
 	}
 	return { verdict: "needs-manual-review", confidence: parsedConfidence ?? 0.4, reason, evidenceUrls: urls };
+}
+
+function looksLikeMaterialBibliographicMismatch(text: string): boolean {
+	const lower = text
+		.toLowerCase()
+		.replace(/\b(?:not|no)\s+(?:a\s+)?(?:title\s*(?:\/|or)\s*)?(?:venue|journal|conference)\s+mismatch\b/g, "")
+		.replace(/\b(?:not|no)\s+(?:a\s+)?(?:venue|journal|conference)\s*(?:\/|or)\s*title\s+mismatch\b/g, "");
+	const materialPatterns = [
+		/\b(?:doi|year|page range|pages?)\s+(?:mismatch(?:es)?|does not match|is wrong|is incorrect|wrong|incorrect)\b/s,
+		/\b(?:wrong|incorrect|mismatched)\s+(?:doi|year|page range|pages?)\b/s,
+		/\b(?:title|author list|authors?)\s+(?:mismatch(?:es)?|does not match|is wrong|is incorrect|wrong|incorrect)\b/s,
+		/\b(?:venue|journal|conference)(?:\/year)?\s+(?:mismatch(?:es)?|does not match|is wrong|is incorrect|wrong|incorrect|differs|conflicts?|is off|are off)\b/s,
+		/\b(?:venue|journal|conference)(?:\/year)?\b.{0,80}\b(?:off|wrong|incorrect|differs|different|conflicts?)\b/s,
+		/\b(?:off|wrong|incorrect|differs|different|conflicts?)\b.{0,80}\b(?:venue|journal|conference)(?:\/year)?\b/s,
+		/\b(?:journal|venue|conference)\b.{0,120}\bconflicts?\s+with\b/s,
+		/\bconflicts?\s+with\s+(?:the\s+)?(?:original\s+)?(?:reference|citation)(?:'s|’s)?\b.{0,120}\b(?:venue|journal|conference|year)\b/s,
+		/\b(?:original\s+)?(?:reference|citation)(?:'s|’s)?\b.{0,120}\b(?:venue|journal|conference|year)\b.{0,120}\b(?:wrong|incorrect|mismatch(?:es)?|off|differs|conflicts?)\b/s,
+		/\b(?:original\s+)?(?:reference|citation)(?:'s|’s)?\b.{0,120}\b(?:likely\s+)?incorrect\b/s,
+	];
+	return materialPatterns.some((pattern) => pattern.test(lower));
+}
+
+function looksLikeBenignBibliographicVariantMismatch(text: string): boolean {
+	const lower = text.toLowerCase();
+	const positiveSameWorkSignals = [
+		/\btitle\b.{0,80}\b(?:same|real|match|matches|aligns?|consistent)\b/s,
+		/\bvenue\b.{0,80}\b(?:match|matches|aligns?|consistent)\b/s,
+		/\bpages?\b.{0,80}\b(?:match|matches|aligns?|consistent)\b/s,
+		/\bdoi\b.{0,80}\b(?:resolves|match|matches|aligns?|consistent)\b/s,
+		/\bnot\s+(?:a\s+)?(?:title|venue)\s+mismatch\b/s,
+	];
+	const positiveCount = positiveSameWorkSignals.filter((pattern) => pattern.test(lower)).length;
+	const benignVariant =
+		/\binitials?\s+(?:vs\.?|versus|rather than|instead of)\s+full\b/s.test(lower) ||
+		/\bfull\s+(?:author\s+)?(?:names?|spelling)\b.{0,120}\binitials?\b/s.test(lower) ||
+		/\binitials?\b.{0,120}\b(?:acceptable|valid|consistent|same authors?|full author spelling)\b/s.test(lower) ||
+		/\bminor\s+(?:punctuation|hyphenation|capitalization)\b/s.test(lower) ||
+		/\bhyphenation\b.{0,80}\b(?:difference|differs|variant|minor)\b/s.test(lower);
+	const materialMismatch =
+		/\b(?:wrong|incorrect)\s+(?:doi|year|page range|pages?)\b/s.test(lower) ||
+		/\b(?:doi|year|page range|pages?)\s+(?:mismatch|does not match|is wrong|is incorrect)\b/s.test(lower) ||
+		/\bdifferent\s+(?:paper|publication|work|article)\b/s.test(lower);
+	return positiveCount >= 2 && benignVariant && !materialMismatch;
 }
 
 function looksLikeExtractionArtifactMismatch(text: string): boolean {

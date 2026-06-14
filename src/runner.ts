@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { isCitecheckAbort, throwIfAborted } from "./cancel.ts";
 import { parseCitecheckArgs, USAGE } from "./args.ts";
@@ -5,10 +6,10 @@ import { compareConversions, choosePrimary } from "./compare.ts";
 import { artifactFromMarkdown, prepareRefsOnlyPdf, runDoclingConversions } from "./convert.ts";
 import { discoverInputs } from "./discover.ts";
 import { normalizeReference } from "./normalize.ts";
-import { makeSummary, writePaperReport, writeSummaryReport } from "./report.ts";
+import { makeSummary, paperReportMarkdownPath, writePaperReport, writeSummaryReport } from "./report.ts";
 import { classifyEvidence } from "./verdict.ts";
 import { checkReferencesWithSearch, locateNativeWebSearch } from "./web-search.ts";
-import type { DiscoveredInput, PaperReport, ReferenceCheck, RunBridge, Verdict } from "./types.ts";
+import type { DiscoveredInput, PaperReport, ReferenceCheck, RunBridge, SkippedPaperReport, Verdict } from "./types.ts";
 import { ensureDir, slugifyPath, timestampForPath } from "./utils.ts";
 
 const DEFAULT_PROGRESS_INTERVAL_MS = 30_000;
@@ -41,13 +42,6 @@ export async function runCitecheck(rawArgs: string, bridge: RunBridge): Promise<
 			return;
 		}
 
-		const searchScript = await locateNativeWebSearch(bridge.getCommands);
-		throwIfAborted(bridge.signal);
-		if (!searchScript) {
-			bridge.ui?.notify?.("Could not locate native-web-search/search.mjs. Is the native-web-search skill installed?", "error");
-			return;
-		}
-
 		emitProgress(
 			bridge,
 			`/citecheck processing ${inputs.length} ${options.fromMd ? "Markdown" : "PDF"} file(s). Output: ${outDir}`,
@@ -55,12 +49,32 @@ export async function runCitecheck(rawArgs: string, bridge: RunBridge): Promise<
 		);
 
 		const reports: PaperReport[] = [];
+		const skipped: SkippedPaperReport[] = [];
+		let searchScript: string | undefined;
 		for (let i = 0; i < inputs.length; i++) {
 			throwIfAborted(bridge.signal);
 			const input = inputs[i]!;
-			const inputLabel = `${i + 1}/${inputs.length}: ${slugifyPath(input.path)}`;
+			const slug = slugifyPath(input.path);
+			const inputLabel = `${i + 1}/${inputs.length}: ${slug}`;
+			if (options.outDir !== undefined) {
+				const existingReportPath = paperReportMarkdownPath(outDir, slug);
+				if (existsSync(existingReportPath)) {
+					const reason = "existing report found";
+					skipped.push({ inputPath: input.path, slug, reportPath: existingReportPath, reason });
+					emitProgress(bridge, `/citecheck paper ${inputLabel} skipped — ${reason}: ${existingReportPath}`, "info");
+					continue;
+				}
+			}
 			bridge.ui?.setStatus?.("citecheck", `processing ${inputLabel}`);
 			emitProgress(bridge, `/citecheck paper ${inputLabel} started`, "info");
+			if (!searchScript) {
+				searchScript = await locateNativeWebSearch(bridge.getCommands);
+				throwIfAborted(bridge.signal);
+				if (!searchScript) {
+					bridge.ui?.notify?.("Could not locate native-web-search/search.mjs. Is the native-web-search skill installed?", "error");
+					return;
+				}
+			}
 			const report = await processOneInput(input, outDir, options, bridge, searchScript);
 			throwIfAborted(bridge.signal);
 			reports.push(report);
@@ -69,9 +83,9 @@ export async function runCitecheck(rawArgs: string, bridge: RunBridge): Promise<
 		}
 
 		const finishedAt = new Date().toISOString();
-		const summary = makeSummary(startedAt, finishedAt, outDir, options, reports);
+		const summary = makeSummary(startedAt, finishedAt, outDir, options, reports, skipped);
 		const written = await writeSummaryReport(summary);
-		emitProgress(bridge, `/citecheck complete: ${formatRunSummary(reports)} Summary: ${written.markdownPath}`, "info");
+		emitProgress(bridge, `/citecheck complete: ${formatRunSummary(reports, skipped.length)} Summary: ${written.markdownPath}`, "info");
 	} finally {
 		bridge.ui?.setStatus?.("citecheck", undefined);
 	}
@@ -357,6 +371,7 @@ function formatPaperSummary(report: PaperReport): string {
 	return `${formatCounts(counts)}${extra.length > 0 ? `; ${extra.join(", ")}` : ""}`;
 }
 
-function formatRunSummary(reports: PaperReport[]): string {
-	return `${reports.length} paper(s), ${formatCounts(countsFromReports(reports))}.`;
+function formatRunSummary(reports: PaperReport[], skippedCount = 0): string {
+	const skipped = skippedCount > 0 ? `, ${skippedCount} skipped` : "";
+	return `${reports.length} paper(s) processed${skipped}, ${formatCounts(countsFromReports(reports))}.`;
 }

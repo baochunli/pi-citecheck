@@ -26,10 +26,6 @@ export async function writeText(path: string, text: string): Promise<void> {
 	await writeFile(path, text, "utf8");
 }
 
-export async function writeJson(path: string, value: unknown): Promise<void> {
-	await writeText(path, JSON.stringify(value, null, 2) + "\n");
-}
-
 export async function commandExists(exec: ExecFn, command: string): Promise<boolean> {
 	const result = await exec("sh", ["-lc", `command -v ${shellQuote(command)} >/dev/null 2>&1`]);
 	return result.code === 0;

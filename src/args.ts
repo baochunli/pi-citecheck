@@ -11,7 +11,7 @@ Subcommands:
 
 Options:
   --recursive                 Recurse into folders when discovering PDFs/Markdown.
-  --out <dir>                 Output directory. Default: .pi/citecheck/<timestamp>/
+  --out <dir>                 Output directory. Default: .pi/citecheck/<timestamp>/; existing per-paper reports are skipped.
   --conversion <mode>         dual | vlm | standard. Default: dual.
   --from-md                   Treat input as Markdown and skip Docling.
   --refs-page <n>             For PDFs, extract exactly page n (1-based) as the references page.

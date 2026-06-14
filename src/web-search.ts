@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { throwIfAborted } from "./cancel.ts";
 import type { CommandInfo, ExecFn, NormalizedReference, ReferenceEntry, SearchEvidence } from "./types.ts";
-import { commandExists, ensureDir, truncateForReport, writeJson, writeText } from "./utils.ts";
+import { commandExists, ensureDir, truncateForReport, writeText } from "./utils.ts";
 
 export async function locateNativeWebSearch(getCommands?: () => CommandInfo[]): Promise<string | undefined> {
 	const commands = getCommands?.() ?? [];
@@ -88,11 +88,8 @@ async function runOneSearch(
 	await writeText(`${prefix}.stdout.txt`, rawText + "\n");
 
 	let resultText = rawText;
-	let rawJsonPath: string | undefined;
 	try {
 		const parsed = JSON.parse(result.stdout || "{}");
-		rawJsonPath = `${prefix}.json`;
-		await writeJson(rawJsonPath, parsed);
 		if (typeof parsed.result === "string") resultText = parsed.result;
 	} catch {
 		// Keep raw stdout/stderr as evidence.
@@ -102,7 +99,6 @@ async function runOneSearch(
 		return {
 			query,
 			purpose,
-			rawJsonPath,
 			rawTextPath: `${prefix}.stdout.txt`,
 			resultText: truncateForReport(resultText),
 			exitCode: result.code,
@@ -113,7 +109,6 @@ async function runOneSearch(
 	return {
 		query,
 		purpose,
-		rawJsonPath,
 		rawTextPath: `${prefix}.stdout.txt`,
 		resultText: truncateForReport(resultText),
 		exitCode: result.code,
@@ -132,7 +127,7 @@ function buildPurpose(entry: ReferenceEntry, normalized: NormalizedReference): s
 		.filter(Boolean)
 		.join("\n");
 
-	return `Verify whether this bibliographic reference corresponds to a real publication, and flag likely AI-hallucinated or mismatched citations. Compare title, authors, year, venue, DOI, and URL when available, but evaluate the Original reference text rather than the heuristic extracted fields. Treat initials vs full given names, abbreviated venues, minor punctuation/hyphenation differences, and an author list shortened with et al. as valid when they identify the same work. Do not call a citation mismatch solely because the heuristic extracted fields are incomplete, malformed, or omit coauthors. Use mismatch only when the original reference materially points to a different work or has a wrong title, DOI, year, venue, or page range. Do not call something hallucinated merely because evidence is sparse; use unverified or needs-manual-review for weak evidence.\n\nReturn exactly this compact structure first:\nVerdict: one of valid | likely-valid | mismatch | unverified | likely-hallucinated | needs-manual-review\nConfidence: number from 0 to 1\nReason: one concise sentence\nEvidence URLs: full URLs separated by spaces\n\nOriginal reference #${entry.index}:\n${entry.raw}\n\nHeuristic extracted fields, which may be incomplete and should not by themselves cause a mismatch verdict:\n${fields || "No reliable fields extracted."}`;
+	return `Verify whether this bibliographic reference corresponds to a real publication, and flag likely AI-hallucinated or mismatched citations. Compare title, authors, year, venue, DOI, and URL when available, but evaluate the Original reference text rather than the heuristic extracted fields. Treat initials vs full given names, abbreviated venues, minor punctuation/hyphenation differences, and an author list shortened with et al. as valid when they identify the same work. Do not call a citation mismatch solely because the heuristic extracted fields are incomplete, malformed, or omit coauthors. Use mismatch when the original reference materially points to a different work or has a wrong title, DOI, year, venue, journal, conference, or page range. A paper that exists but is cited in the wrong journal/conference/venue is a mismatch, not valid or likely-valid, even when title and authors match. Do not call something hallucinated merely because evidence is sparse; use unverified or needs-manual-review for weak evidence.\n\nReturn exactly this compact structure first:\nVerdict: one of valid | likely-valid | mismatch | unverified | likely-hallucinated | needs-manual-review\nConfidence: number from 0 to 1\nReason: one concise sentence\nEvidence URLs: full URLs separated by spaces\n\nOriginal reference #${entry.index}:\n${entry.raw}\n\nHeuristic extracted fields, which may be incomplete and should not by themselves cause a mismatch verdict:\n${fields || "No reliable fields extracted."}`;
 }
 
 async function mapLimit<T, R>(items: T[], limit: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {

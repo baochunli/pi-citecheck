@@ -114,7 +114,6 @@ export interface ConversionComparison {
 export interface SearchEvidence {
 	query: string;
 	purpose: string;
-	rawJsonPath?: string;
 	rawTextPath?: string;
 	resultText: string;
 	exitCode?: number;
@@ -157,11 +156,19 @@ export interface PaperReport {
 	finishedAt: string;
 }
 
+export interface SkippedPaperReport {
+	inputPath: string;
+	slug: string;
+	reportPath: string;
+	reason: string;
+}
+
 export interface SummaryReport {
 	startedAt: string;
 	finishedAt: string;
 	outDir: string;
 	options: CitecheckOptions;
 	papers: PaperReport[];
+	skipped: SkippedPaperReport[];
 	counts: Record<Verdict | "total", number>;
 }

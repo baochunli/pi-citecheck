@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,27 +46,140 @@ describe("runner", () => {
 			],
 		});
 
-		const summary = JSON.parse(await readFile(join(temp, "out", "summary.json"), "utf8"));
-		assert.equal(summary.counts.total, 1);
-		assert.equal(summary.counts["likely-valid"], 1);
-
 		const summaryMarkdown = await readFile(join(temp, "out", "summary.md"), "utf8");
+		assert.equal(existsSync(join(temp, "out", "summary.json")), false);
 		assert.doesNotMatch(summaryMarkdown, /## Verdict counts/);
-		assert.match(summaryMarkdown, /## Paper attention counts/);
-		assert.match(summaryMarkdown, /\| Paper \| mismatch \| needs-manual-review \|/);
-		assert.match(summaryMarkdown, /\| sample\.md \| 0 \| 0 \|/);
-		assert.match(summaryMarkdown, /## Per-paper verdict counts/);
-		assert.match(summaryMarkdown, /\| Paper \| Total references \| valid \| likely-valid \| mismatch \| needs-manual-review \|/);
-		assert.match(summaryMarkdown, /\| sample\.md \| 1 \| 0 \| 1 \| 0 \| 0 \|/);
+		assert.doesNotMatch(summaryMarkdown, /## Paper attention counts/);
+		assert.doesNotMatch(summaryMarkdown, /## Per-paper verdict counts/);
+		assert.match(summaryMarkdown, /## Papers that need attention\n\n_No papers need attention\._/);
+		assert.match(summaryMarkdown, /## Citation checks on all papers/);
+		assert.match(summaryMarkdown, /\| Paper \| Total references \| valid \| likely-valid \| mismatch \| likely-hallucinated \| needs-manual-review \|/);
+		assert.match(summaryMarkdown, /\| sample\.md \| 1 \| 0 \| 1 \| 0 \| 0 \| 0 \|/);
 		assert.ok(progressMessages.some((message) => message.includes("/citecheck processing 1 Markdown file")));
 		assert.ok(progressMessages.some((message) => message.includes("/citecheck web-search started: sample")));
 		assert.ok(progressMessages.some((message) => message.includes("/citecheck web-search 1/1: sample")));
 		assert.ok(progressMessages.some((message) => message.includes("/citecheck complete:")));
 
-		const paper = JSON.parse(await readFile(join(temp, "out", "reports", "sample.report.json"), "utf8"));
-		assert.equal(paper.checks.length, 1);
-		assert.equal(paper.checks[0].verdict, "likely-valid");
-		assert.match(paper.artifacts[0].section.markdown, /ImageNet Classification/);
+		assert.equal(existsSync(join(temp, "out", "reports", "sample.report.json")), false);
+		assert.equal(existsSync(join(temp, "out", "raw-search", "sample", "ref-001.json")), false);
+		const paperMarkdown = await readFile(join(temp, "out", "reports", "sample.report.md"), "utf8");
+		assert.match(paperMarkdown, /### Reference 1: likely-valid/);
+		assert.match(paperMarkdown, /ImageNet Classification/);
+		assert.doesNotMatch(paperMarkdown, /raw JSON:/);
+	});
+
+	it("summary attention section lists only papers with mismatch, hallucinated, or manual-review counts", async () => {
+		const temp = await mkdtemp(join(tmpdir(), "citecheck-test-"));
+		const skillDir = join(temp, "native-web-search");
+		await mkdir(skillDir, { recursive: true });
+		await writeFile(join(skillDir, "SKILL.md"), "---\nname: native-web-search\ndescription: test\n---\n", "utf8");
+		await writeFile(join(skillDir, "search.mjs"), "// fake\n", "utf8");
+
+		const papersDir = join(temp, "papers");
+		await mkdir(papersDir, { recursive: true });
+		await writeFile(join(papersDir, "hallucinated.md"), "# Hallucinated\n\n## References\n\n[1] C. Author, 'Invented Paper,' Conf, 2022.\n", "utf8");
+		await writeFile(join(papersDir, "needs.md"), "# Needs\n\n## References\n\n[1] A. Author, 'Needs Attention,' Conf, 2020.\n", "utf8");
+		await writeFile(join(papersDir, "ok.md"), "# OK\n\n## References\n\n[1] B. Author, 'Looks Good,' Conf, 2021.\n", "utf8");
+
+		const exec: ExecFn = async (command, args) => {
+			if (command === "sh") return { stdout: "", stderr: "", code: 0 };
+			if (command === "node") {
+				const query = args[1] ?? "";
+				const verdict = query.includes("Needs Attention")
+					? "mismatch"
+					: query.includes("Invented Paper")
+						? "likely-hallucinated"
+						: "valid";
+				return {
+					stdout: JSON.stringify({
+						result: `Verdict: ${verdict}\nConfidence: 0.90\nReason: test evidence.\nEvidence URLs: https://example.com/paper`,
+					}),
+					stderr: "",
+					code: 0,
+				};
+			}
+			return { stdout: "", stderr: `unexpected command ${command}`, code: 1 };
+		};
+
+		await runCitecheck(`${papersDir} --from-md --out ${join(temp, "out")} --yes`, {
+			cwd: temp,
+			exec,
+			hasUI: false,
+			getCommands: () => [
+				{
+					name: "native-web-search",
+					source: "skill",
+					sourceInfo: { path: join(skillDir, "SKILL.md") },
+				},
+			],
+		});
+
+		const summaryMarkdown = await readFile(join(temp, "out", "summary.md"), "utf8");
+		const attentionSection = /## Papers that need attention\n\n([\s\S]*?)\n\n## Citation checks on all papers/.exec(summaryMarkdown)?.[1] ?? "";
+		assert.match(attentionSection, /\| Paper \| mismatch \| likely-hallucinated \| needs-manual-review \|/);
+		assert.match(attentionSection, /\| hallucinated\.md \| 0 \| 1 \| 0 \|/);
+		assert.match(attentionSection, /\| needs\.md \| 1 \| 0 \| 0 \|/);
+		assert.doesNotMatch(attentionSection, /ok\.md/);
+		assert.match(summaryMarkdown, /\| hallucinated\.md \| 1 \| 0 \| 0 \| 0 \| 1 \| 0 \|/);
+		assert.match(summaryMarkdown, /\| ok\.md \| 1 \| 1 \| 0 \| 0 \| 0 \| 0 \|/);
+	});
+
+	it("skips papers with existing reports when --out is reused", async () => {
+		const temp = await mkdtemp(join(tmpdir(), "citecheck-test-"));
+		const skillDir = join(temp, "native-web-search");
+		await mkdir(skillDir, { recursive: true });
+		await writeFile(join(skillDir, "SKILL.md"), "---\nname: native-web-search\ndescription: test\n---\n", "utf8");
+		await writeFile(join(skillDir, "search.mjs"), "// fake\n", "utf8");
+
+		const papersDir = join(temp, "papers");
+		await mkdir(papersDir, { recursive: true });
+		await writeFile(join(papersDir, "already.md"), "# A\n\n## References\n\n[1] A. Author, 'Already Done,' Conf, 2020.\n", "utf8");
+		await writeFile(join(papersDir, "remaining.md"), "# B\n\n## References\n\n[1] B. Author, 'Remaining Paper,' Conf, 2021.\n", "utf8");
+
+		const outDir = join(temp, "out");
+		await mkdir(join(outDir, "reports"), { recursive: true });
+		await writeFile(join(outDir, "reports", "already.report.md"), "# existing report\n", "utf8");
+
+		let searchCalls = 0;
+		const progressMessages: string[] = [];
+		const exec: ExecFn = async (command) => {
+			if (command === "sh") return { stdout: "", stderr: "", code: 0 };
+			if (command === "node") {
+				searchCalls++;
+				return {
+					stdout: JSON.stringify({
+						result:
+							"Verdict: valid\nConfidence: 0.90\nReason: title and year match a real paper.\nEvidence URLs: https://example.com/paper",
+					}),
+					stderr: "",
+					code: 0,
+				};
+			}
+			return { stdout: "", stderr: `unexpected command ${command}`, code: 1 };
+		};
+
+		await runCitecheck(`${papersDir} --from-md --out ${outDir} --yes`, {
+			cwd: temp,
+			exec,
+			hasUI: false,
+			progress: (message) => progressMessages.push(message),
+			getCommands: () => [
+				{
+					name: "native-web-search",
+					source: "skill",
+					sourceInfo: { path: join(skillDir, "SKILL.md") },
+				},
+			],
+		});
+
+		assert.equal(searchCalls, 1);
+		assert.ok(progressMessages.some((message) => message.includes("already skipped")));
+		assert.ok(progressMessages.some((message) => message.includes("1 skipped")));
+		assert.equal(existsSync(join(outDir, "reports", "remaining.report.md")), true);
+		const summaryMarkdown = await readFile(join(outDir, "summary.md"), "utf8");
+		assert.match(summaryMarkdown, /## Skipped existing reports/);
+		assert.match(summaryMarkdown, /already\.md/);
+		assert.match(summaryMarkdown, /reports\/already\.report\.md/);
 	});
 
 	it("uses a specified references page as a single-page PDF slice", async () => {
@@ -130,12 +244,11 @@ describe("runner", () => {
 		assert.equal(docling?.args.at(-1), qpdf.args[5]);
 		assert.equal(docling?.args.includes(pdf), false);
 
-		const paper = JSON.parse(await readFile(join(temp, "out", "reports", "paper.report.json"), "utf8"));
-		assert.equal(paper.refsOnlyPdf.startPage, 10);
-		assert.equal(paper.refsOnlyPdf.endPage, 10);
-		assert.equal(paper.refsOnlyPdf.source, "specified");
-		assert.equal(paper.refsOnlyPdf.method, "qpdf");
-		assert.equal(paper.checks[0].verdict, "valid");
+		assert.equal(existsSync(join(temp, "out", "reports", "paper.report.json")), false);
+		const paperMarkdown = await readFile(join(temp, "out", "reports", "paper.report.md"), "utf8");
+		assert.match(paperMarkdown, /specified references page 10/);
+		assert.match(paperMarkdown, /method qpdf/);
+		assert.match(paperMarkdown, /### Reference 1: valid/);
 	});
 
 	it("does not fall back to full-PDF Docling when a specified references page cannot be sliced", async () => {
@@ -175,8 +288,9 @@ describe("runner", () => {
 		});
 
 		assert.equal(calls.some((call) => call.command === "docling"), false);
-		const paper = JSON.parse(await readFile(join(temp, "out", "reports", "paper.report.json"), "utf8"));
-		assert.equal(paper.artifacts.length, 0);
-		assert.match(paper.errors[0], /refusing to convert the full PDF/);
+		assert.equal(existsSync(join(temp, "out", "reports", "paper.report.json")), false);
+		const paperMarkdown = await readFile(join(temp, "out", "reports", "paper.report.md"), "utf8");
+		assert.match(paperMarkdown, /## Errors/);
+		assert.match(paperMarkdown, /refusing to convert the full PDF/);
 	});
 });
