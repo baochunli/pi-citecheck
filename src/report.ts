@@ -1,24 +1,31 @@
 import { basename, join, relative } from "node:path";
 import type { PaperReport, ReferenceCheck, SummaryReport, Verdict } from "./types.ts";
-import { firstLine, writeJson, writeText } from "./utils.ts";
+import { firstLine, writeText } from "./utils.ts";
 
-export async function writePaperReport(report: PaperReport): Promise<{ markdownPath: string; jsonPath: string }> {
-	const mdPath = join(report.outputDir, "reports", `${report.slug}.report.md`);
-	const jsonPath = join(report.outputDir, "reports", `${report.slug}.report.json`);
+export function paperReportMarkdownPath(outDir: string, slug: string): string {
+	return join(outDir, "reports", `${slug}.report.md`);
+}
+
+export async function writePaperReport(report: PaperReport): Promise<{ markdownPath: string }> {
+	const mdPath = paperReportMarkdownPath(report.outputDir, report.slug);
 	await writeText(mdPath, renderPaperReport(report));
-	await writeJson(jsonPath, report);
-	return { markdownPath: mdPath, jsonPath };
+	return { markdownPath: mdPath };
 }
 
-export async function writeSummaryReport(summary: SummaryReport): Promise<{ markdownPath: string; jsonPath: string }> {
+export async function writeSummaryReport(summary: SummaryReport): Promise<{ markdownPath: string }> {
 	const mdPath = join(summary.outDir, "summary.md");
-	const jsonPath = join(summary.outDir, "summary.json");
 	await writeText(mdPath, renderSummaryReport(summary));
-	await writeJson(jsonPath, summary);
-	return { markdownPath: mdPath, jsonPath };
+	return { markdownPath: mdPath };
 }
 
-export function makeSummary(startedAt: string, finishedAt: string, outDir: string, options: SummaryReport["options"], papers: PaperReport[]): SummaryReport {
+export function makeSummary(
+	startedAt: string,
+	finishedAt: string,
+	outDir: string,
+	options: SummaryReport["options"],
+	papers: PaperReport[],
+	skipped: SummaryReport["skipped"] = [],
+): SummaryReport {
 	const counts = emptyVerdictCounts();
 	for (const paper of papers) {
 		for (const check of paper.checks) {
@@ -26,7 +33,7 @@ export function makeSummary(startedAt: string, finishedAt: string, outDir: strin
 			counts[check.verdict]++;
 		}
 	}
-	return { startedAt, finishedAt, outDir, options, papers, counts };
+	return { startedAt, finishedAt, outDir, options, papers, skipped, counts };
 }
 
 function renderSummaryReport(summary: SummaryReport): string {
@@ -35,15 +42,21 @@ function renderSummaryReport(summary: SummaryReport): string {
 	lines.push(`Started: ${summary.startedAt}`);
 	lines.push(`Finished: ${summary.finishedAt}`);
 	lines.push(`Output directory: \`${summary.outDir}\``, "");
-	lines.push("## Paper attention counts", "");
-	lines.push("| Paper | mismatch | needs-manual-review |", "|---|---:|---:|");
+	lines.push("## Papers that need attention", "");
+	const attentionRows: string[] = [];
 	for (const paper of summary.papers) {
 		const counts = countPaperVerdicts(paper);
-		lines.push(
+		if (counts.mismatch === 0 && counts["needs-manual-review"] === 0) continue;
+		attentionRows.push(
 			`| ${escapeTable(basename(paper.inputPath))} | ${counts.mismatch} | ${counts["needs-manual-review"]} |`,
 		);
 	}
-	lines.push("", "## Per-paper verdict counts", "");
+	if (attentionRows.length > 0) {
+		lines.push("| Paper | mismatch | needs-manual-review |", "|---|---:|---:|", ...attentionRows);
+	} else {
+		lines.push("_No papers need attention._");
+	}
+	lines.push("", "## Citation checks on all papers", "");
 	lines.push(
 		"| Paper | Total references | valid | likely-valid | mismatch | needs-manual-review |",
 		"|---|---:|---:|---:|---:|---:|",
@@ -53,6 +66,16 @@ function renderSummaryReport(summary: SummaryReport): string {
 		lines.push(
 			`| ${escapeTable(basename(paper.inputPath))} | ${counts.total} | ${counts.valid} | ${counts["likely-valid"]} | ${counts.mismatch} | ${counts["needs-manual-review"]} |`,
 		);
+	}
+	if (summary.skipped.length > 0) {
+		lines.push("", "## Skipped existing reports", "");
+		lines.push("These papers were not reprocessed because `--out` was used and a per-paper report already exists.", "");
+		lines.push("| Paper | Existing report | Reason |", "|---|---|---|");
+		for (const skipped of summary.skipped) {
+			lines.push(
+				`| ${escapeTable(basename(skipped.inputPath))} | \`${escapeTable(relative(summary.outDir, skipped.reportPath) || ".")}\` | ${escapeTable(skipped.reason)} |`,
+			);
+		}
 	}
 	lines.push("");
 	return lines.join("\n");
@@ -158,7 +181,6 @@ function appendCheckDetails(lines: string[], check: ReferenceCheck, outDir: stri
 	lines.push(`- search query: ${check.normalized.query}`);
 	if (check.evidence) {
 		lines.push("", "Search evidence:");
-		if (check.evidence.rawJsonPath) lines.push(`- raw JSON: \`${rel(check.evidence.rawJsonPath)}\``);
 		if (check.evidence.rawTextPath) lines.push(`- raw text: \`${rel(check.evidence.rawTextPath)}\``);
 		if (check.evidenceUrls.length > 0) {
 			lines.push("- URLs:");

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { throwIfAborted } from "./cancel.ts";
 import type { CommandInfo, ExecFn, NormalizedReference, ReferenceEntry, SearchEvidence } from "./types.ts";
-import { commandExists, ensureDir, truncateForReport, writeJson, writeText } from "./utils.ts";
+import { commandExists, ensureDir, truncateForReport, writeText } from "./utils.ts";
 
 export async function locateNativeWebSearch(getCommands?: () => CommandInfo[]): Promise<string | undefined> {
 	const commands = getCommands?.() ?? [];
@@ -88,11 +88,8 @@ async function runOneSearch(
 	await writeText(`${prefix}.stdout.txt`, rawText + "\n");
 
 	let resultText = rawText;
-	let rawJsonPath: string | undefined;
 	try {
 		const parsed = JSON.parse(result.stdout || "{}");
-		rawJsonPath = `${prefix}.json`;
-		await writeJson(rawJsonPath, parsed);
 		if (typeof parsed.result === "string") resultText = parsed.result;
 	} catch {
 		// Keep raw stdout/stderr as evidence.
@@ -102,7 +99,6 @@ async function runOneSearch(
 		return {
 			query,
 			purpose,
-			rawJsonPath,
 			rawTextPath: `${prefix}.stdout.txt`,
 			resultText: truncateForReport(resultText),
 			exitCode: result.code,
@@ -113,7 +109,6 @@ async function runOneSearch(
 	return {
 		query,
 		purpose,
-		rawJsonPath,
 		rawTextPath: `${prefix}.stdout.txt`,
 		resultText: truncateForReport(resultText),
 		exitCode: result.code,

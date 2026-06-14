@@ -86,6 +86,8 @@ Write reports to a specific directory:
 /citecheck paper.pdf --out ./citecheck-report
 ```
 
+When `--out` points at an existing output directory, papers that already have a per-paper Markdown report in `reports/` are skipped. This lets you rerun the same command to resume a stopped batch.
+
 Check an existing Markdown conversion instead of running Docling:
 
 ```text
@@ -127,7 +129,7 @@ Options:
 
 ```text
 --recursive                 Recurse into folders when discovering PDFs/Markdown.
---out <dir>                 Output directory. Default: .pi/citecheck/<timestamp>/
+--out <dir>                 Output directory. Default: .pi/citecheck/<timestamp>/; existing per-paper reports are skipped.
 --conversion <mode>         dual | vlm | standard. Default: dual.
 --from-md                   Treat input as Markdown and skip Docling.
 --refs-page <n>             For PDFs, extract exactly page n (1-based) as the references page.
@@ -273,7 +275,6 @@ By default, output is written relative to the current Pi working directory:
 ```text
 .pi/citecheck/<timestamp>/
   summary.md
-  summary.json
   markdown/
     <paper>.vlm.md
     <paper>.standard.md
@@ -288,28 +289,24 @@ By default, output is written relative to the current Pi working directory:
     <paper>.refs-only.pdf
   raw-search/
     <paper>/
-      ref-001.json
       ref-001.stdout.txt
-      ref-002.json
       ref-002.stdout.txt
   reports/
     <paper>.report.md
-    <paper>.report.json
 ```
 
 Some files appear only when relevant. For example, `refs-pdf/` appears only if references-only PDF extraction succeeds.
 
 ## Report contents
 
-### `summary.md` / `summary.json`
+### `summary.md`
 
 The summary report includes:
 
 - Start and finish timestamps.
 - Output directory.
-- A per-paper attention table with only `mismatch` and `needs-manual-review` counts.
-- A second per-paper verdict-count table with total references, `valid`, `likely-valid`, `mismatch`, and `needs-manual-review` counts.
-- In JSON, command options and the full underlying paper/check data for auditing.
+- A "Papers that need attention" table listing only papers with `mismatch` or `needs-manual-review` counts above zero.
+- A "Citation checks on all papers" verdict-count table with total references, `valid`, `likely-valid`, `mismatch`, and `needs-manual-review` counts.
 
 ### Per-paper reports
 
@@ -348,7 +345,7 @@ pi-citecheck/
     discover.ts         # Input discovery
     normalize.ts        # Citation metadata extraction heuristics
     references.ts       # References-section extraction and splitting
-    report.ts           # Markdown/JSON report generation
+    report.ts           # Markdown report generation
     runner.ts           # End-to-end orchestration
     types.ts            # Shared types
     utils.ts            # Filesystem and formatting helpers
